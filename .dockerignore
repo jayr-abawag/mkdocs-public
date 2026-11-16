@@ -1,0 +1,19 @@
+# Docker build context hygiene. Unlike git, the Docker build context does not
+# honor .gitignore, so build output, caches and local tooling must be excluded
+# here explicitly. Patterns are matched relative to the context root; "**/"
+# makes a pattern apply at any depth (Docker does not do gitignore-style
+# recursive matching for bare names).
+
+# Git metadata and local agent tooling
+.git
+.zcode
+
+# Local Python environments
+.venv
+
+# Python bytecode caches (any depth, e.g. .github/tools/__pycache__)
+**/__pycache__/
+
+# MkDocs build output (repo-root convention and the actual 1-mkdocs/site)
+site/
+1-mkdocs/site

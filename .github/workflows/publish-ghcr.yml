@@ -1,0 +1,45 @@
+# Publish use case: build the MkDocs site image and push it to GHCR with
+# latest (on the default branch), branch, and sha- tags.
+#
+# One of two callers of the reusable pipeline in docker-build-push.yml;
+# build-image.yml is the verify use case (same build, no push). The two
+# callers keep their path-filter lists in sync, and a change to the
+# reusable workflow itself re-triggers both.
+
+name: Publish MkDocs site image to GHCR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '1-mkdocs/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/docker-build-push.yml'
+      - '.github/workflows/publish-ghcr.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write   # build-push-action emits provenance attestations on push by default
+  id-token: write
+
+jobs:
+  publish:
+    # Must cover everything docker-build-push.yml requests: a called
+    # workflow can only narrow the permissions its caller grants.
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      push: true
+    secrets: inherit

@@ -1,0 +1,83 @@
+# Reusable image pipeline for the repository's multi-stage Dockerfile:
+# a strict MkDocs build (python:3.14-slim builder) served by nginx
+# (nginxinc/nginx-unprivileged:1.29-alpine, port 8080).
+#
+# Callers:
+#   - publish-ghcr.yml — publish use case: pushes latest/branch/sha- tags on main
+#   - build-image.yml  — verify use case: same build on PRs and non-main branches, no push
+#
+# Action versions are SHA-pinned (commits verified 2026-11-14 via the GitHub
+# releases API); the comment documents the release each SHA corresponds to.
+# NOTE: all docker/* actions used here run on Node 24 and require an Actions
+# Runner >= v2.327.1 (ubuntu-24.04 satisfies this). Do NOT set the
+# DOCKER_BUILD_NO_SUMMARY or DOCKER_BUILD_EXPORT_RETENTION_DAYS env vars —
+# they were removed in build-push-action v7.
+
+name: Reusable — build (and optionally push) the MkDocs site image
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: "Push the built image to GHCR. false = build-only verification (no GHCR login, nothing published)."
+        required: false
+        type: boolean
+        default: true
+      ref:
+        description: "Git ref to check out and build. Empty = the caller's own ref."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write   # build-push-action emits provenance attestations on push by default
+  id-token: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-24.04   # ubuntu-latest currently = 24.04; ubuntu-26.04 is GA but not yet -latest; pin for determinism
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags and labels)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          # GHCR image names must be lowercase; metadata-action lowercases
+          # github.repository. Add a -docs suffix later if other images appear.
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=sha-
+
+      - name: Build and push image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # No `platforms` input: the image targets the runner arch
+          # (linux/amd64). Add setup-qemu-action + linux/arm64 only if arm64
+          # consumers appear.

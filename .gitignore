@@ -1,0 +1,25 @@
+# MkDocs build output
+site/
+
+# Python bytecode and test/type-check caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local Python environments
+.venv/
+.venv*/
+venv/
+env/
+
+# Tool caches
+.cache/
+.tox/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+# Mimosa security-gate local state
+.mimosa/

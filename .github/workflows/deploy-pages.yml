@@ -1,0 +1,91 @@
+# Deploys the MkDocs site (source in 1-mkdocs/) to GitHub Pages via the
+# official artifact-based Actions pipeline: build -> upload-pages-artifact ->
+# deploy-pages. No gh-pages branch, no Jekyll processing, no extra secrets —
+# deploy-pages authenticates with the implicit GITHUB_TOKEN plus an OIDC
+# id-token minted by the runner.
+#
+# ONE-TIME SETUP that GITHUB_TOKEN cannot do: Settings -> Pages -> Source:
+# "GitHub Actions". Per configure-pages' action.yml, its enablement input
+# "requires a token other than GITHUB_TOKEN" (a PAT with
+# administration:write + pages:write, or a GitHub App). On a public repo the
+# free plan supports Pages; private repos additionally need a paid plan.
+#
+# site/ is gitignored, so the site is built fresh in CI on every run.
+
+name: Deploy MkDocs site to Pages
+
+on:
+  push:
+    branches: [main]
+    # Same gate style as publish-ghcr.yml: redeploy only when the site source,
+    # its pinned toolchain, or this workflow changes — README/tooling-only
+    # pushes do not rerun a full MkDocs build + Pages deployment.
+    paths:
+      - '1-mkdocs/**'
+      - 'requirements.txt'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+# deploy-pages requires a minimum of pages: write and id-token: write;
+# id-token mints the OIDC JWT that authenticates the deployment source.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time. Never cancel an in-flight deployment —
+# canceling can leave the Pages environment in a partially deployed state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Pin for determinism, matching publish-ghcr.yml: ubuntu-latest currently
+    # = 24.04 but migrates to 26.04 in Nov 2026 (actions/runner-images#14748).
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7 # v7.0.1 (2026-07-20)
+
+      - name: Set up Python
+        uses: actions/setup-python@v7 # v7.1.0 (2026-10-22)
+        with:
+          python-version: "3.14"
+          # Cache keyed on requirements.txt at the repo root (default location).
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build site (strict)
+        working-directory: 1-mkdocs
+        # --strict: fail the job on any build warning (broken nav, bad links).
+        # --site-dir site: output lands in 1-mkdocs/site (gitignored).
+        run: mkdocs build --strict --site-dir site
+
+      - name: Configure GitHub Pages
+        # No `enabled: true` input on purpose: enabling Pages via API needs a
+        # non-GITHUB_TOKEN, so first-run enablement stays manual.
+        uses: actions/configure-pages@v6 # v6.0.0 (2026-03-25)
+
+      - name: Upload Pages artifact
+        # Artifact contract: gzip archive containing a single tar, no symlinks.
+        # deploy-pages consumes it immediately, so the default 1-day artifact
+        # retention is fine.
+        uses: actions/upload-pages-artifact@v5 # v5.0.0 (2026-04-10)
+        with:
+          path: 1-mkdocs/site
+
+  deploy:
+    # needs: build is required — without it the deploy job can start before
+    # the artifact exists and fail looking for it.
+    needs: build
+    runs-on: ubuntu-24.04   # same pin as the build job above
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }} # live site URL on run + env
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5 # v5.0.1 (2026-09-01)

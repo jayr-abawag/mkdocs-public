@@ -1,0 +1,91 @@
+name: Markdown to PDF
+
+# Converts a single markdown file from this repo to a print-ready PDF using
+# the same renderer library the site itself uses: Python-Markdown (MkDocs's
+# own engine, so Markdown semantics match the published site) -> HTML ->
+# WeasyPrint 70.0 with a small print stylesheet (.github/tools/md_to_pdf.py).
+# pandoc was deliberately rejected: neither pandoc nor TeX is preinstalled
+# on current runner images (actions/runner-images Ubuntu2404-Readme, image
+# 20261111.370.1), and pandoc's parsing dialect would diverge from the site.
+# Run manually from the Actions tab (the input file must exist on the default
+# branch `main`), or:
+#   gh workflow run export-pdf.yml -f markdown_path=1-mkdocs/docs/index.md
+on:
+  workflow_dispatch:
+    inputs:
+      markdown_path:
+        description: 'Repo-relative path of the markdown file to convert, e.g. 1-mkdocs/docs/what-is-mkdocs.md'
+        required: true
+        default: '1-mkdocs/docs/what-is-mkdocs.md'
+        type: string
+
+# One export per ref at a time. cancel-in-progress is safe here: a canceled
+# run uploads nothing (this is a manual run-artifact lane, not a deployment).
+concurrency:
+  group: export-pdf-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: checkout + pip installs only. This workflow never writes
+# repo content (no pages: write, no id-token) — the PDF is delivered as a
+# run artifact, which is a separate mechanism from any site deployment.
+permissions:
+  contents: read
+
+jobs:
+  pdf:
+    # Pinned to match publish-ghcr.yml for determinism:
+    # ubuntu-latest still points to 24.04 but migrates to 26.04 in Nov 2026
+    # (actions/runner-images#14748). The apt list below (WeasyPrint docs,
+    # Ubuntu >= 20.04 section) covers both, so it stays correct after any
+    # future re-pin.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7 # v7.0.1 (2026-07-20)
+
+      - name: Set up Python
+        uses: actions/setup-python@v7 # v7.1.0 (2026-10-22)
+        with:
+          # Same interpreter as the Dockerfile builder (python:3.14-slim);
+          # the converter pins resolve on 3.14.
+          python-version: "3.14"
+
+      - name: Install Pango runtime (WeasyPrint system deps)
+        # WeasyPrint's wheel bundles Python code but not Pango; these four
+        # apt packages are the official Ubuntu requirement.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libharfbuzz-subset0
+
+      - name: Install converter
+        # These pins are NOT the locally validated environment: the repo's
+        # .venv has markdown 3.11.3 (transitive via mkdocs==1.6.1) but no
+        # weasyprint and no pygments, and none of the three comes from
+        # requirements.txt (that file is the site toolchain, not the PDF one).
+        # weasyprint and pygments are needed only by
+        # .github/tools/md_to_pdf.py, which imports both directly; all three
+        # are pinned to fix the converter toolchain across runs.
+        run: pip install weasyprint==70.0 markdown==3.11.3 pygments==2.21.0
+
+      - name: Convert markdown to PDF
+        env:
+          MD_PATH: ${{ inputs.markdown_path }} # inputs context preferred over github.event.inputs
+        run: |
+          # Guard culture (matches .github/tools/): reject absolute paths and
+          # any path containing '..' before it is ever used.
+          case "$MD_PATH" in ..*|*..*|/*) echo "refusing unsafe path: $MD_PATH"; exit 1;; esac
+          test -f "$MD_PATH" || { echo "file not found: $MD_PATH"; exit 1; }
+          weasyprint --info    # self-test: proves Pango is loadable before converting
+          mkdir -p pdf-output
+          python .github/tools/md_to_pdf.py "$MD_PATH" "pdf-output/$(basename "${MD_PATH%.md}").pdf"
+
+      - name: Upload PDF as run artifact
+        uses: actions/upload-artifact@v7 # v7.0.2 (2026-10-07)
+        with:
+          name: pdf-output
+          path: pdf-output/*.pdf
+          # Downloadable from the run's Summary page under "Artifacts";
+          # fail loudly on a miss instead of uploading an empty artifact.
+          if-no-files-found: error
+          retention-days: 30

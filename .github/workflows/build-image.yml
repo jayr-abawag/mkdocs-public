@@ -1,0 +1,49 @@
+# Verify use case: run the exact image build the publish workflow runs,
+# but WITHOUT pushing — catches Dockerfile or docs-source breakage on PRs
+# and non-main branches before anything lands on main. With push: false
+# the reusable pipeline skips the GHCR login step and publishes nothing.
+#
+# One of two callers of the reusable pipeline in docker-build-push.yml;
+# publish-ghcr.yml is the publish use case (same build, pushed with
+# latest/branch/sha- tags). The two callers keep their path-filter lists
+# in sync, and a change to the reusable workflow itself re-triggers both.
+
+name: Build MkDocs site image (verify, no push)
+
+on:
+  pull_request:
+    paths:
+      - '1-mkdocs/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/docker-build-push.yml'
+      - '.github/workflows/build-image.yml'
+  push:
+    branches-ignore: [main]
+    paths:
+      - '1-mkdocs/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/docker-build-push.yml'
+      - '.github/workflows/build-image.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-build:
+    # Must cover everything docker-build-push.yml requests: a called
+    # workflow can only narrow the permissions its caller grants.
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      push: false
+    secrets: inherit

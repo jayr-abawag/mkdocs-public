@@ -1,0 +1,13 @@
+site_name: MkDocs Guide
+
+theme: readthedocs
+
+nav:
+  - "Home": index.md
+  - "What is MkDocs?": what-is-mkdocs.md
+  - "Why MkDocs?": benefits.md
+  - "Use Cases": use-cases.md
+  - "Configuring with mkdocs.yml": configuration.md
+  - "Themes": themes.md
+  - "Styling: CSS and Palette": styling.md
+  - "Writing Content": authoring.md
